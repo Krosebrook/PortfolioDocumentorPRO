@@ -1,20 +1,52 @@
 import React, { useState } from 'react';
 import { RepoAnalysis, RepoAudit } from '../types';
 import HealthChart from './RadarChart';
-import { ChevronDown, ChevronUp, ExternalLink, ShieldCheck, FileText, Zap, Loader2, Scale, GitCommit } from 'lucide-react';
-import { generateReadme, generateCiCd, generateLicense, generateCommitConfig } from '../services/geminiService';
+import { ChevronDown, ChevronUp, ExternalLink, ShieldCheck, FileText, Zap, Loader2, Scale, GitCommit, FileWarning, Lock, Users, FolderTree } from 'lucide-react';
+import { 
+  generateReadme, 
+  generateCiCd, 
+  generateLicense, 
+  generateCommitConfig,
+  generateIssueTemplates,
+  generateSecurityPolicy,
+  generateCodeOfConduct,
+  generateDirectoryStructure
+} from '../services/geminiService';
 import CodeModal from './CodeModal';
 
 interface RepoCardProps {
   repo: RepoAnalysis;
 }
 
+interface ActionButtonProps {
+  icon: React.ElementType;
+  label: string;
+  onClick: (e: React.MouseEvent) => void;
+  loading: boolean;
+  disabled?: boolean;
+}
+
+const ActionButton: React.FC<ActionButtonProps> = ({ icon: Icon, label, onClick, loading, disabled }) => (
+  <button 
+    onClick={onClick}
+    disabled={loading || disabled}
+    className={`
+      flex items-center justify-start gap-2 px-3 py-2 
+      bg-slate-800 hover:bg-slate-700 
+      border border-slate-700 rounded-md 
+      text-sm text-slate-300 transition-colors 
+      disabled:opacity-50 disabled:cursor-not-allowed
+      ${loading ? 'animate-pulse bg-slate-700' : ''}
+    `}
+  >
+      {loading ? <Loader2 className="animate-spin" size={16}/> : <Icon size={16} className="text-indigo-400" />}
+      <span className="truncate">{label}</span>
+  </button>
+);
+
 const RepoCard: React.FC<RepoCardProps> = ({ repo }) => {
   const [expanded, setExpanded] = useState(false);
-  const [loadingReadme, setLoadingReadme] = useState(false);
-  const [loadingCiCd, setLoadingCiCd] = useState(false);
-  const [loadingLicense, setLoadingLicense] = useState(false);
-  const [loadingCommit, setLoadingCommit] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
   
   const [modalOpen, setModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState({ title: '', content: '' });
@@ -40,65 +72,23 @@ const RepoCard: React.FC<RepoCardProps> = ({ repo }) => {
     return 'text-red-400';
   };
 
-  const handleGenerateReadme = async (e: React.MouseEvent) => {
+  const handleGenerator = async (
+    e: React.MouseEvent, 
+    actionName: string, 
+    generatorFn: (repo: RepoAnalysis) => Promise<string>,
+    title: string
+  ) => {
     e.stopPropagation();
-    setLoadingReadme(true);
+    setLoadingAction(actionName);
     try {
-      const content = await generateReadme(repo);
-      setModalContent({ title: `README.md - ${repo.name}`, content });
+      const content = await generatorFn(repo);
+      setModalContent({ title, content });
       setModalOpen(true);
     } catch (error) {
       console.error(error);
-      alert("Failed to generate README");
+      alert(`Failed to generate ${title}`);
     } finally {
-      setLoadingReadme(false);
-    }
-  };
-
-  const handleGenerateCiCd = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setLoadingCiCd(true);
-    try {
-      const content = await generateCiCd(repo);
-      setModalContent({ title: `.github/workflows/ci.yml - ${repo.name}`, content });
-      setModalOpen(true);
-    } catch (error) {
-      console.error(error);
-      alert("Failed to generate CI/CD Config");
-    } finally {
-      setLoadingCiCd(false);
-    }
-  };
-
-  const handleGenerateLicense = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setLoadingLicense(true);
-    try {
-      const content = await generateLicense(repo);
-      setModalContent({ title: `LICENSE - ${repo.name}`, content });
-      setModalOpen(true);
-    } catch (error) {
-      console.error(error);
-      alert("Failed to generate License");
-    } finally {
-      setLoadingLicense(false);
-    }
-  };
-
-  const handleGenerateCommitConfig = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setLoadingCommit(true);
-    try {
-      const content = await generateCommitConfig(repo);
-      const isJs = repo.primaryLanguage?.toLowerCase().match(/(javascript|typescript|node|react|vue|angular)/);
-      const filename = isJs ? 'commitlint.config.js' : '.pre-commit-config.yaml';
-      setModalContent({ title: `${filename} - ${repo.name}`, content });
-      setModalOpen(true);
-    } catch (error) {
-      console.error(error);
-      alert("Failed to generate Commit Config");
-    } finally {
-      setLoadingCommit(false);
+      setLoadingAction(null);
     }
   };
 
@@ -141,7 +131,9 @@ const RepoCard: React.FC<RepoCardProps> = ({ repo }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <h4 className="text-sm uppercase tracking-wider text-slate-500 mb-2 font-bold">Health Audit</h4>
-                <HealthChart audit={repo.audit} />
+                <div className="h-64">
+                   <HealthChart audit={repo.audit} />
+                </div>
                 <div className="mt-4">
                   <h5 className="text-sm font-semibold text-emerald-400 mb-1 flex items-center gap-1">
                       <ShieldCheck size={14}/> Top Fixes
@@ -176,40 +168,48 @@ const RepoCard: React.FC<RepoCardProps> = ({ repo }) => {
                 </div>
 
                 <div className="pt-4 border-t border-slate-800">
-                   <h4 className="text-sm uppercase tracking-wider text-slate-500 mb-3 font-bold">Generators</h4>
+                   <h4 className="text-sm uppercase tracking-wider text-slate-500 mb-3 font-bold">Engineering Assets Generator</h4>
                    <div className="grid grid-cols-2 gap-3">
-                      <button 
-                        onClick={handleGenerateReadme}
-                        disabled={loadingReadme}
-                        className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-sm text-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                         {loadingReadme ? <Loader2 className="animate-spin" size={16}/> : <FileText size={16} />}
-                         README
-                      </button>
-                      <button 
-                        onClick={handleGenerateCiCd}
-                        disabled={loadingCiCd}
-                        className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-sm text-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                         {loadingCiCd ? <Loader2 className="animate-spin" size={16}/> : <Zap size={16} />}
-                         CI/CD & Docs
-                      </button>
-                      <button 
-                        onClick={handleGenerateLicense}
-                        disabled={loadingLicense}
-                        className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-sm text-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                         {loadingLicense ? <Loader2 className="animate-spin" size={16}/> : <Scale size={16} />}
-                         License
-                      </button>
-                       <button 
-                        onClick={handleGenerateCommitConfig}
-                        disabled={loadingCommit}
-                        className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-sm text-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                         {loadingCommit ? <Loader2 className="animate-spin" size={16}/> : <GitCommit size={16} />}
-                         Commit Config
-                      </button>
+                      <ActionButton 
+                        icon={FileText} label="README" 
+                        loading={loadingAction === 'readme'} 
+                        onClick={(e) => handleGenerator(e, 'readme', generateReadme, `README.md - ${repo.name}`)} 
+                      />
+                      <ActionButton 
+                        icon={Zap} label="CI/CD & Docs" 
+                        loading={loadingAction === 'cicd'} 
+                        onClick={(e) => handleGenerator(e, 'cicd', generateCiCd, `.github/workflows/ci.yml - ${repo.name}`)} 
+                      />
+                      <ActionButton 
+                        icon={FolderTree} label="Structure" 
+                        loading={loadingAction === 'structure'} 
+                        onClick={(e) => handleGenerator(e, 'structure', generateDirectoryStructure, `Structure - ${repo.name}`)} 
+                      />
+                      <ActionButton 
+                        icon={FileWarning} label="Issues" 
+                        loading={loadingAction === 'issues'} 
+                        onClick={(e) => handleGenerator(e, 'issues', generateIssueTemplates, `Issue Templates - ${repo.name}`)} 
+                      />
+                      <ActionButton 
+                        icon={Scale} label="License" 
+                        loading={loadingAction === 'license'} 
+                        onClick={(e) => handleGenerator(e, 'license', generateLicense, `LICENSE - ${repo.name}`)} 
+                      />
+                      <ActionButton 
+                        icon={Lock} label="Security" 
+                        loading={loadingAction === 'security'} 
+                        onClick={(e) => handleGenerator(e, 'security', generateSecurityPolicy, `SECURITY.md - ${repo.name}`)} 
+                      />
+                      <ActionButton 
+                        icon={Users} label="Conduct" 
+                        loading={loadingAction === 'coc'} 
+                        onClick={(e) => handleGenerator(e, 'coc', generateCodeOfConduct, `CODE_OF_CONDUCT.md - ${repo.name}`)} 
+                      />
+                      <ActionButton 
+                        icon={GitCommit} label="Commits" 
+                        loading={loadingAction === 'commit'} 
+                        onClick={(e) => handleGenerator(e, 'commit', generateCommitConfig, `Commit Config - ${repo.name}`)} 
+                      />
                    </div>
                 </div>
               </div>

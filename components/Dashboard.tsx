@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AnalysisResult, ActionItem } from '../types';
 import RepoCard from './RepoCard';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { CheckCircle, AlertOctagon, Terminal, Activity, Layers, Award, Book, Loader2 } from 'lucide-react';
 import { generateDocStrategy } from '../services/geminiService';
 import CodeModal from './CodeModal';
+import ErrorBoundary from './ErrorBoundary';
 
 interface DashboardProps {
   data: AnalysisResult;
@@ -17,17 +18,30 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [strategyContent, setStrategyContent] = useState('');
 
-  const langData = Object.entries(summary.stats.languages || {}).map(([name, count]) => ({
-    name,
-    count,
-  }));
+  // Memoize expensive data transformations
+  const langData = useMemo(() => {
+    return Object.entries(summary.stats.languages || {}).map(([name, count]) => ({
+      name,
+      count: Number(count),
+    })).sort((a, b) => b.count - a.count);
+  }, [summary.stats.languages]);
 
-  const sortedRepos = [...repos].sort((a, b) => {
-    // Basic sort by active status then by name
-    if (a.status === 'Active' && b.status !== 'Active') return -1;
-    if (a.status !== 'Active' && b.status === 'Active') return 1;
-    return 0;
-  });
+  const sortedRepos = useMemo(() => {
+    return [...repos].sort((a, b) => {
+      // Prioritize Active repos, then sort by name
+      if (a.status === 'Active' && b.status !== 'Active') return -1;
+      if (a.status !== 'Active' && b.status === 'Active') return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [repos]);
+
+  const prioritizedActions = useMemo(() => {
+    const priorities = ['High', 'Medium', 'Low'] as const;
+    return priorities.map(priority => ({
+      priority,
+      items: actions.filter(a => a.priority === priority)
+    })).filter(group => group.items.length > 0);
+  }, [actions]);
 
   const handleGenerateStrategy = async () => {
     setLoadingStrategy(true);
@@ -40,6 +54,14 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
       alert("Failed to generate Documentation Strategy");
     } finally {
       setLoadingStrategy(false);
+    }
+  };
+
+  const getActionStyles = (priority: string) => {
+    switch(priority) {
+      case 'High': return { container: 'border-red-500/50 bg-red-500/5', badge: 'text-red-400 bg-red-400/10' };
+      case 'Medium': return { container: 'border-yellow-500/50 bg-yellow-500/5', badge: 'text-yellow-400 bg-yellow-400/10' };
+      default: return { container: 'border-blue-500/50 bg-blue-500/5', badge: 'text-blue-400 bg-blue-400/10' };
     }
   };
 
@@ -150,7 +172,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
         </section>
         
         {/* Docs Strategy Section */}
-        <section className="bg-gradient-to-r from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-700 flex items-center justify-between">
+        <section className="bg-gradient-to-r from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-700 flex flex-col md:flex-row items-center justify-between gap-4">
            <div>
                <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-2">
                    <Book className="text-indigo-400" /> Portfolio Documentation Strategy
@@ -162,7 +184,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
            <button 
              onClick={handleGenerateStrategy}
              disabled={loadingStrategy}
-             className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium shadow-lg hover:shadow-indigo-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+             className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium shadow-lg hover:shadow-indigo-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 w-full md:w-auto justify-center"
            >
               {loadingStrategy ? <Loader2 className="animate-spin" /> : <Book size={18} />}
               Generate Strategy
@@ -175,33 +197,20 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                 <Layers className="text-indigo-400" /> Prioritized Action Plan
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {(['High', 'Medium', 'Low'] as const).map(priority => {
-                    const priorityActions = actions.filter(a => a.priority === priority);
-                    if (priorityActions.length === 0) return null;
-                    
-                    const colorMap = {
-                        High: 'border-red-500/50 bg-red-500/5',
-                        Medium: 'border-yellow-500/50 bg-yellow-500/5',
-                        Low: 'border-blue-500/50 bg-blue-500/5'
-                    };
-                    
-                    const badgeColor = {
-                         High: 'text-red-400 bg-red-400/10',
-                        Medium: 'text-yellow-400 bg-yellow-400/10',
-                        Low: 'text-blue-400 bg-blue-400/10'
-                    }
+                {prioritizedActions.map(({ priority, items }) => {
+                    const styles = getActionStyles(priority);
 
                     return (
-                        <div key={priority} className={`rounded-xl border ${colorMap[priority]} p-4`}>
-                            <h3 className={`font-bold mb-4 flex items-center gap-2 ${badgeColor[priority]} inline-block px-3 py-1 rounded text-sm`}>
+                        <div key={priority} className={`rounded-xl border ${styles.container} p-4`}>
+                            <h3 className={`font-bold mb-4 flex items-center gap-2 ${styles.badge} inline-block px-3 py-1 rounded text-sm`}>
                                 {priority} Priority
                             </h3>
                             <div className="space-y-4">
-                                {priorityActions.map((action, idx) => (
-                                    <div key={idx} className="bg-slate-800 p-3 rounded border border-slate-700 shadow-sm">
+                                {items.map((action, idx) => (
+                                    <div key={idx} className="bg-slate-800 p-3 rounded border border-slate-700 shadow-sm hover:border-slate-600 transition-colors">
                                         <div className="flex justify-between items-start mb-1">
                                             <span className="font-semibold text-slate-200 text-sm">{action.title}</span>
-                                            <span className="text-xs font-mono text-slate-500">{action.effort} Effort</span>
+                                            <span className="text-xs font-mono text-slate-500 bg-slate-900 px-2 py-0.5 rounded">{action.effort} Effort</span>
                                         </div>
                                         <div className="text-xs text-indigo-400 mb-2 font-mono">{action.repo}</div>
                                         <p className="text-xs text-slate-400 leading-normal">{action.rationale}</p>
@@ -221,7 +230,9 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
           </h2>
           <div className="space-y-4">
             {sortedRepos.map((repo) => (
-              <RepoCard key={repo.name} repo={repo} />
+              <ErrorBoundary key={repo.name}>
+                <RepoCard repo={repo} />
+              </ErrorBoundary>
             ))}
           </div>
         </section>
@@ -235,7 +246,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                 {summary.spotlightProjects.map((project, i) => (
                     <div key={i} className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-6 rounded-xl hover:border-emerald-500/50 transition-colors group">
                         <h3 className="text-xl font-bold text-white mb-2 group-hover:text-emerald-400 transition-colors">{project.name}</h3>
-                        <p className="text-slate-400 text-sm mb-4 h-20 overflow-y-auto">{project.description}</p>
+                        <p className="text-slate-400 text-sm mb-4 h-20 overflow-y-auto custom-scrollbar">{project.description}</p>
                         <div className="bg-slate-950/50 p-3 rounded border border-slate-800">
                             <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block mb-1">Impressive Factor</span>
                             <p className="text-sm text-emerald-300">{project.impressiveFactor}</p>

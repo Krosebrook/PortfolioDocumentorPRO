@@ -3,10 +3,25 @@ import { AnalysisResult, RepoAnalysis, PortfolioSummary } from '../types';
 
 const apiKey = process.env.API_KEY;
 
+export class GeminiError extends Error {
+  constructor(message: string, public originalError?: any) {
+    super(message);
+    this.name = 'GeminiError';
+  }
+}
+
 // --- UTILITIES ---
 const cleanCodeBlock = (text: string): string => {
-  // Removes markdown code fences (e.g., ```json ... ```) to return raw content
-  return text.replace(/^```[a-z]*\n([\s\S]*)\n```$/i, '$1').trim();
+  // Removes markdown code fences (e.g., ```json ... ```, ```markdown ... ```) to return raw content
+  // Handles cases where language might be specified or not
+  if (!text) return '';
+  return text.replace(/^```[a-z-]*\n([\s\S]*)\n```$/i, '$1').trim();
+};
+
+const validateApiKey = () => {
+  if (!apiKey) {
+    throw new GeminiError("API Key is missing. Please ensure process.env.API_KEY is set.");
+  }
 };
 
 // --- SCHEMAS ---
@@ -99,11 +114,12 @@ const rootSchema: Schema = {
 // --- SERVICES ---
 
 export const analyzePortfolio = async (urls: string, context: string): Promise<AnalysisResult> => {
-  if (!apiKey) {
-    throw new Error("API Key is missing. Please ensure process.env.API_KEY is set.");
+  validateApiKey();
+  if (!urls || urls.trim().length === 0) {
+    throw new GeminiError("URLs cannot be empty.");
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
 
   const systemInstruction = `
     You are a Portfolio Intelligence Auditor and Engineering Signal Analyst. 
@@ -142,19 +158,24 @@ export const analyzePortfolio = async (urls: string, context: string): Promise<A
     });
 
     if (response.text) {
-      return JSON.parse(response.text) as AnalysisResult;
+      try {
+          return JSON.parse(response.text) as AnalysisResult;
+      } catch (parseError) {
+          throw new GeminiError("Failed to parse AI response. Please try again.", parseError);
+      }
     } else {
-      throw new Error("Empty response from AI");
+      throw new GeminiError("Empty response from AI. The model may be overloaded.");
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Analysis Failed:", error);
-    throw error;
+    if (error instanceof GeminiError) throw error;
+    throw new GeminiError(error.message || "Unknown error during analysis.", error);
   }
 };
 
 export const generateReadme = async (repo: RepoAnalysis): Promise<string> => {
-  if (!apiKey) throw new Error("API Key is missing.");
-  const ai = new GoogleGenAI({ apiKey });
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
 
   const prompt = `
     Generate a comprehensive README.md for:
@@ -168,9 +189,10 @@ export const generateReadme = async (repo: RepoAnalysis): Promise<string> => {
     3. **Project Structure**: A file tree representation showing where source code, tests, and documentation reside.
     4. **Documentation**: EXPLICITLY state where docs are. E.g., "See \`/docs\` for detailed guides" or "Docs are inline".
     5. **Getting Started**: Installation & Run steps.
-    6. **Troubleshooting**: 2-3 common issues & solutions for ${repo.primaryLanguage}.
-    7. **Roadmap**: A checklist of 3-4 future items.
-    8. **License**: Reference the LICENSE file.
+    6. **Contribution Guidelines**: A dedicated section explaining how to contribute (e.g., "Fork, Branch, PR, Test").
+    7. **Troubleshooting**: 2-3 common issues & solutions for ${repo.primaryLanguage}.
+    8. **Roadmap**: A checklist of 3-4 future items.
+    9. **License**: Reference the LICENSE file.
     
     Output raw Markdown. No fences.
   `;
@@ -184,8 +206,8 @@ export const generateReadme = async (repo: RepoAnalysis): Promise<string> => {
 };
 
 export const generateCiCd = async (repo: RepoAnalysis): Promise<string> => {
-  if (!apiKey) throw new Error("API Key is missing.");
-  const ai = new GoogleGenAI({ apiKey });
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
 
   const prompt = `
     Generate a production-grade Github Actions Workflow (.github/workflows/ci.yml) for:
@@ -214,8 +236,8 @@ export const generateCiCd = async (repo: RepoAnalysis): Promise<string> => {
 };
 
 export const generateDocStrategy = async (summary: PortfolioSummary): Promise<string> => {
-  if (!apiKey) throw new Error("API Key is missing.");
-  const ai = new GoogleGenAI({ apiKey });
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
 
   const prompt = `
     Design a "Documentation-as-Code" Strategy for this portfolio:
@@ -242,8 +264,8 @@ export const generateDocStrategy = async (summary: PortfolioSummary): Promise<st
 };
 
 export const generateLicense = async (repo: RepoAnalysis): Promise<string> => {
-  if (!apiKey) throw new Error("API Key is missing.");
-  const ai = new GoogleGenAI({ apiKey });
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
 
   const prompt = `
     Generate a standard LICENSE (MIT or Apache 2.0) for "${repo.name}".
@@ -261,8 +283,8 @@ export const generateLicense = async (repo: RepoAnalysis): Promise<string> => {
 };
 
 export const generateCommitConfig = async (repo: RepoAnalysis): Promise<string> => {
-  if (!apiKey) throw new Error("API Key is missing.");
-  const ai = new GoogleGenAI({ apiKey });
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
 
   const prompt = `
     Generate a config file for Conventional Commits.
@@ -281,4 +303,106 @@ export const generateCommitConfig = async (repo: RepoAnalysis): Promise<string> 
   });
 
   return cleanCodeBlock(response.text || "Failed to generate Commit Config.");
+};
+
+export const generateIssueTemplates = async (repo: RepoAnalysis): Promise<string> => {
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
+
+  const prompt = `
+    Generate GitHub Issue Templates for: ${repo.name}.
+    
+    Produce two separate markdown files content in one output:
+    1. **.github/ISSUE_TEMPLATE/bug_report.md**
+    2. **.github/ISSUE_TEMPLATE/feature_request.md**
+    
+    Standardize fields (Description, Steps to Reproduce, Expected Behavior, Environment).
+    
+    Output format:
+    ### .github/ISSUE_TEMPLATE/bug_report.md
+    [Content...]
+    
+    ### .github/ISSUE_TEMPLATE/feature_request.md
+    [Content...]
+    
+    No code fences.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: prompt,
+  });
+
+  return cleanCodeBlock(response.text || "Failed to generate Issue Templates.");
+};
+
+export const generateSecurityPolicy = async (repo: RepoAnalysis): Promise<string> => {
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
+
+  const prompt = `
+    Generate a SECURITY.md file for ${repo.name}.
+    
+    Include:
+    - Supported versions (e.g., "Latest release").
+    - Reporting a vulnerability (e.g., "Email security@example.com").
+    - Expected response time.
+    
+    Output raw Markdown. No fences.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: prompt,
+  });
+
+  return cleanCodeBlock(response.text || "Failed to generate Security Policy.");
+};
+
+export const generateCodeOfConduct = async (repo: RepoAnalysis): Promise<string> => {
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
+
+  const prompt = `
+    Generate a CODE_OF_CONDUCT.md (Contributor Covenant v2.1) for ${repo.name}.
+    Include standard sections: Our Pledge, Our Standards, Enforcement, Attribution.
+    
+    Output raw Markdown. No fences.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: prompt,
+  });
+
+  return cleanCodeBlock(response.text || "Failed to generate Code of Conduct.");
+};
+
+export const generateDirectoryStructure = async (repo: RepoAnalysis): Promise<string> => {
+  validateApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey! });
+
+  const prompt = `
+    Analyze ${repo.name} (Language: ${repo.primaryLanguage}, Frameworks: ${repo.frameworks.join(', ')}) and recommend an Optimal Standardized Directory Structure.
+    
+    Output a file tree diagram and a brief explanation of the key directories (e.g., src, tests, docs, .github).
+    
+    Example output format:
+    root/
+    ├── src/        # Source code
+    ├── tests/      # Unit and integration tests
+    ...
+    
+    Explanation:
+    ...
+    
+    Output raw text/markdown. No fences.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: prompt,
+  });
+
+  return cleanCodeBlock(response.text || "Failed to generate Directory Structure.");
 };
