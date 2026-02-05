@@ -1,0 +1,5 @@
+{
+  "name": "PortfolioSignal",
+  "description": "An AI-powered intelligence dashboard that audits GitHub portfolios, analyzes engineering signals, and generates prioritized action plans for production readiness.",
+  "requestFramePermissions": []
+}
