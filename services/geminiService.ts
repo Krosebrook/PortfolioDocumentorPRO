@@ -3,7 +3,13 @@ import { AnalysisResult, RepoAnalysis, PortfolioSummary } from '../types';
 
 const apiKey = process.env.API_KEY;
 
-// Define the response schema strictly to match our TypeScript interfaces
+// --- UTILITIES ---
+const cleanCodeBlock = (text: string): string => {
+  // Removes markdown code fences (e.g., ```json ... ```) to return raw content
+  return text.replace(/^```[a-z]*\n([\s\S]*)\n```$/i, '$1').trim();
+};
+
+// --- SCHEMAS ---
 const auditSchema: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -58,7 +64,7 @@ const summarySchema: Schema = {
         totalRepos: { type: Type.NUMBER },
         activeCount: { type: Type.NUMBER },
         archivedCount: { type: Type.NUMBER },
-        languages: { type: Type.OBJECT, description: "Key is language name, value is count" } // Map simulation
+        languages: { type: Type.OBJECT, description: "Key is language name, value is count" }
       },
       required: ["totalRepos", "activeCount", "archivedCount"]
     },
@@ -89,6 +95,8 @@ const rootSchema: Schema = {
   },
   required: ["summary", "repos", "actions", "claimsCheck"]
 };
+
+// --- SERVICES ---
 
 export const analyzePortfolio = async (urls: string, context: string): Promise<AnalysisResult> => {
   if (!apiKey) {
@@ -122,7 +130,6 @@ export const analyzePortfolio = async (urls: string, context: string): Promise<A
   `;
 
   try {
-    // Using gemini-3-pro-preview for complex reasoning and potential search grounding (if configured)
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: prompt,
@@ -130,7 +137,6 @@ export const analyzePortfolio = async (urls: string, context: string): Promise<A
         systemInstruction: systemInstruction,
         responseMimeType: "application/json",
         responseSchema: rootSchema,
-        // Enable Google Search to try and find public repo details if they are public URLs
         tools: [{ googleSearch: {} }] 
       }
     });
@@ -151,23 +157,22 @@ export const generateReadme = async (repo: RepoAnalysis): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
-    Generate a comprehensive README.md file for the following repository:
+    Generate a comprehensive README.md for:
     Name: ${repo.name}
     Language: ${repo.primaryLanguage}
-    Frameworks: ${repo.frameworks.join(', ')}
     Description: ${repo.description}
     
-    The README must include:
-    1. **Project Title & Description**: Clearly state what the project does.
-    2. **Installation Instructions**: Specific steps for ${repo.primaryLanguage}.
-    3. **Usage Examples**: Code snippets or command line examples.
-    4. **Project Structure**: A section outlining the recommended directory structure for this project, specifically recommending where documentation should reside (e.g., a '/docs' folder vs inline markdown) based on best practices for ${repo.primaryLanguage}.
-    5. **Contribution Guidelines**: How to contribute to the project.
-    6. **Troubleshooting**: A section with 2-3 common/placeholder issues relevant to ${repo.primaryLanguage}/${repo.frameworks.join(', ')} (e.g., environment variable setup, dependency conflicts) and provide placeholder solutions.
-    7. **Roadmap**: A section listing 3-4 future planned features or improvements using a markdown checklist format (e.g., '- [ ] Implement user authentication').
-    8. **License**: A section stating the project is licensed under a common open-source license (e.g., MIT or Apache 2.0) and explicitly referencing the LICENSE file.
+    Structure:
+    1. **Title & Badge Placeholder**: (CI/CD, License)
+    2. **Description**: Clear value prop.
+    3. **Project Structure**: A file tree representation showing where source code, tests, and documentation reside.
+    4. **Documentation**: EXPLICITLY state where docs are. E.g., "See \`/docs\` for detailed guides" or "Docs are inline".
+    5. **Getting Started**: Installation & Run steps.
+    6. **Troubleshooting**: 2-3 common issues & solutions for ${repo.primaryLanguage}.
+    7. **Roadmap**: A checklist of 3-4 future items.
+    8. **License**: Reference the LICENSE file.
     
-    Format the output as raw Markdown. Do not include markdown code block fences (like \`\`\`markdown).
+    Output raw Markdown. No fences.
   `;
 
   const response = await ai.models.generateContent({
@@ -175,7 +180,7 @@ export const generateReadme = async (repo: RepoAnalysis): Promise<string> => {
     contents: prompt,
   });
 
-  return response.text || "Failed to generate README.";
+  return cleanCodeBlock(response.text || "Failed to generate README.");
 };
 
 export const generateCiCd = async (repo: RepoAnalysis): Promise<string> => {
@@ -183,30 +188,21 @@ export const generateCiCd = async (repo: RepoAnalysis): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
-    Generate a robust Github Actions CI/CD workflow YAML file (.github/workflows/ci.yml) for:
-    Name: ${repo.name}
-    Language: ${repo.primaryLanguage}
-    Frameworks: ${repo.frameworks.join(', ')}
+    Generate a production-grade Github Actions Workflow (.github/workflows/ci.yml) for:
+    Repo: ${repo.name} (${repo.primaryLanguage})
     
-    The pipeline should include:
-    1. **Triggers**: Push to main/master and pull requests.
-    2. **Permissions**: contents: read, pages: write, id-token: write.
-    3. **Job 'quality-check'**:
-       - Checkout code.
-       - Setup ${repo.primaryLanguage} environment.
-       - Install dependencies.
-       - **Commit Linting**: Enforce consistent commit messages (Conventional Commits) using a lightweight check or linter.
-       - **Linting**: Run standard linters (eslint, flake8, etc.).
-       - **Testing**: Run unit tests.
-       - **Build**: Attempt build if applicable.
-    4. **Job 'deploy-docs'**:
-       - Run ONLY on push to main branch (after 'quality-check' passes).
-       - Build documentation:
-         - If JavaScript/TypeScript: Use 'typedoc' to generate static docs.
-         - If Python: Use 'mkdocs build'.
-       - Deploy to GitHub Pages using 'actions/deploy-pages' and 'actions/upload-pages-artifact'.
+    Requirements:
+    1. **Triggers**: Push to main, PRs.
+    2. **Jobs**:
+       - 'lint-and-test': Checkout, setup env, install deps, run lint (eslint/flake8), run tests, run build.
+       - 'commit-lint': Check conventional commits.
+       - 'deploy-docs': 
+         - Runs only on push to main && success.
+         - Permissions: contents:read, pages:write, id-token:write.
+         - Tooling: Use 'typedoc' (if TS/JS) or 'mkdocs' (if Python) to build static site.
+         - Deploy: Use 'actions/upload-pages-artifact' & 'actions/deploy-pages'.
     
-    Format the output as raw YAML. Do not include markdown code block fences.
+    Output raw YAML. No fences.
   `;
 
   const response = await ai.models.generateContent({
@@ -214,7 +210,7 @@ export const generateCiCd = async (repo: RepoAnalysis): Promise<string> => {
     contents: prompt,
   });
 
-  return response.text || "Failed to generate CI/CD configuration.";
+  return cleanCodeBlock(response.text || "Failed to generate CI/CD configuration.");
 };
 
 export const generateDocStrategy = async (summary: PortfolioSummary): Promise<string> => {
@@ -222,21 +218,19 @@ export const generateDocStrategy = async (summary: PortfolioSummary): Promise<st
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
-    Create a comprehensive Documentation Strategy for an engineering portfolio with the following stats:
-    Total Repos: ${summary.stats.totalRepos}
-    Languages: ${Object.keys(summary.stats.languages).join(', ')}
-    Capabilities: ${summary.capabilities.join(', ')}
+    Design a "Documentation-as-Code" Strategy for this portfolio:
+    Repos: ${summary.stats.totalRepos}
+    Langs: ${Object.keys(summary.stats.languages).join(', ')}
     
-    The strategy should include:
-    1. **Project Structure**: Recommendations for standardizing docs (e.g. /docs folder vs inline).
-    2. **Tooling Recommendations**:
-       - For Python projects: Recommend MkDocs.
-       - For JS/TS projects: Recommend TypeDoc for API reference and Docusaurus for guides.
-    3. **Maintenance Plan**: A strategy for keeping documentation up-to-date with code changes.
-    4. **Automated Workflows**: Explain how to use CI/CD for auto-generating and deploying docs (Github Pages).
-    5. **Definition of Done**: A clear checklist for documentation requirements in Pull Requests.
+    Cover:
+    1. **Taxonomy**: Standard folder structure (e.g., /docs/architecture, /docs/api).
+    2. **Tooling**: 
+       - JS/TS: Recommend Docusaurus or TypeDoc.
+       - Python: Recommend MkDocs with Material theme.
+    3. **CI/CD Integration**: How to auto-build/deploy docs on merge.
+    4. **Maintenance**: Strategy for keeping docs in sync (e.g., "Doc Tests", PR checklists).
     
-    Format the output as Markdown.
+    Output raw Markdown. No fences.
   `;
 
   const response = await ai.models.generateContent({
@@ -244,7 +238,7 @@ export const generateDocStrategy = async (summary: PortfolioSummary): Promise<st
     contents: prompt,
   });
 
-  return response.text || "Failed to generate Documentation Strategy.";
+  return cleanCodeBlock(response.text || "Failed to generate Strategy.");
 };
 
 export const generateLicense = async (repo: RepoAnalysis): Promise<string> => {
@@ -252,10 +246,10 @@ export const generateLicense = async (repo: RepoAnalysis): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
-    Generate a standard open-source license file (MIT or Apache 2.0) for the repository named "${repo.name}".
-    Choose the most appropriate one for a ${repo.primaryLanguage} project (default to MIT).
-    Use the current year and "The ${repo.name} Contributors" as the copyright holder.
-    Format as raw text.
+    Generate a standard LICENSE (MIT or Apache 2.0) for "${repo.name}".
+    Copyright Year: ${new Date().getFullYear()}.
+    Holder: The ${repo.name} Contributors.
+    Output raw text.
   `;
 
   const response = await ai.models.generateContent({
@@ -263,7 +257,7 @@ export const generateLicense = async (repo: RepoAnalysis): Promise<string> => {
     contents: prompt,
   });
 
-  return response.text || "Failed to generate License.";
+  return cleanCodeBlock(response.text || "Failed to generate License.");
 };
 
 export const generateCommitConfig = async (repo: RepoAnalysis): Promise<string> => {
@@ -271,14 +265,14 @@ export const generateCommitConfig = async (repo: RepoAnalysis): Promise<string> 
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
-    Generate a configuration file to enforce Conventional Commits for:
-    Language: ${repo.primaryLanguage}
-
-    - If JavaScript/TypeScript: Generate "commitlint.config.js" extending "@commitlint/config-conventional".
-    - If Python or others: Generate ".pre-commit-config.yaml" using "commitizen" or "conventional-pre-commit".
+    Generate a config file for Conventional Commits.
+    Language: ${repo.primaryLanguage}.
     
-    Add comments explaining how to install the necessary tools.
-    Format as raw code (JS or YAML). Do not include markdown fences.
+    Rules:
+    - If JS/TS: Generate 'commitlint.config.js'.
+    - If Python/Go/Other: Generate '.pre-commit-config.yaml' with 'commitizen' hook.
+    
+    Output raw code. No fences.
   `;
 
   const response = await ai.models.generateContent({
@@ -286,5 +280,5 @@ export const generateCommitConfig = async (repo: RepoAnalysis): Promise<string> 
     contents: prompt,
   });
 
-  return response.text || "Failed to generate Commit Config.";
+  return cleanCodeBlock(response.text || "Failed to generate Commit Config.");
 };

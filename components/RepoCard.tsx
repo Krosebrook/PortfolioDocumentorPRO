@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { RepoAnalysis } from '../types';
+import { RepoAnalysis, RepoAudit } from '../types';
 import HealthChart from './RadarChart';
-import { ChevronDown, ChevronUp, GitBranch, ExternalLink, ShieldCheck, AlertTriangle, FileText, Zap, Loader2, Scale, GitCommit } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, ShieldCheck, FileText, Zap, Loader2, Scale, GitCommit } from 'lucide-react';
 import { generateReadme, generateCiCd, generateLicense, generateCommitConfig } from '../services/geminiService';
 import CodeModal from './CodeModal';
 
@@ -19,8 +19,19 @@ const RepoCard: React.FC<RepoCardProps> = ({ repo }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState({ title: '', content: '' });
 
-  // Calculate average score
-  const scores = Object.values(repo.audit).filter(v => typeof v === 'number') as number[];
+  // Explicitly map keys to avoid accidental inclusion of non-numeric props if schema changes
+  const auditKeys: (keyof RepoAudit)[] = [
+    'documentation', 
+    'buildDevX', 
+    'testing', 
+    'ciCd', 
+    'security', 
+    'observability', 
+    'maintainability', 
+    'productionReadiness'
+  ];
+
+  const scores = auditKeys.map(key => repo.audit[key] as number);
   const avgScore = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
 
   const getScoreColor = (score: number) => {
@@ -79,7 +90,8 @@ const RepoCard: React.FC<RepoCardProps> = ({ repo }) => {
     setLoadingCommit(true);
     try {
       const content = await generateCommitConfig(repo);
-      const filename = repo.primaryLanguage.toLowerCase().includes('script') ? 'commitlint.config.js' : '.pre-commit-config.yaml';
+      const isJs = repo.primaryLanguage?.toLowerCase().match(/(javascript|typescript|node|react|vue|angular)/);
+      const filename = isJs ? 'commitlint.config.js' : '.pre-commit-config.yaml';
       setModalContent({ title: `${filename} - ${repo.name}`, content });
       setModalOpen(true);
     } catch (error) {
